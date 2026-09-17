@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>校園社群平台</title>
+
+<!-- LINE LIFF SDK -->
+<script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "PingFang TC", "Microsoft JhengHei", sans-serif;
+    background: #f5f4f0;
+    color: #2c2c2a;
+    padding: 16px;
+    line-height: 1.6;
+  }
+  .card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 20px;
+    max-width: 480px;
+    margin: 0 auto;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  h1 { font-size: 20px; margin-bottom: 12px; }
+  p.hint { color: #767671; font-size: 14px; margin-bottom: 16px; }
+  label { display: block; font-size: 14px; font-weight: 600; margin: 14px 0 6px; }
+  input, select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #d8d6ce;
+    border-radius: 8px;
+    font-size: 15px;
+    background: #fff;
+  }
+  input[type="file"] { padding: 8px; }
+  button {
+    width: 100%;
+    padding: 12px;
+    margin-top: 20px;
+    background: #06c755; /* LINE 綠 */
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:disabled { background: #c9c7bf; cursor: not-allowed; }
+  #status-box {
+    text-align: center;
+    padding: 40px 16px;
+  }
+  #status-box .icon { font-size: 40px; margin-bottom: 12px; }
+  .error-text { color: #d64545; font-size: 14px; margin-top: 8px; }
+  #preview-img {
+    margin-top: 10px;
+    max-width: 100%;
+    border-radius: 8px;
+    display: none;
+  }
+</style>
+</head>
+<body>
+
+<div class="card" id="app">
+  <div id="loading" style="text-align:center; padding: 40px 0;">載入中...</div>
+</div>
+
+<script>
+/**
+ * ============================================================
+ * 設定區：以下兩個值一定要換成你自己的
+ * ============================================================
+ */
+const LIFF_ID = '2011648627-nKXtNx4E';           // 從 LINE Developers Console 的 LIFF Channel 頁面複製
+const API_URL = 'https://script.google.com/macros/s/AKfycbyaS8iXoPQ1DHq2pvB2TiebOynePHK3u49dHt7eFboYgSI7LjjmHVQopEOz5gLC41sA/exec'; // 例如 https://script.google.com/macros/s/xxxxx/exec
+
+/**
+ * ============================================================
+ * 共用函式：呼叫後端 API
+ * ============================================================
+ */
+function callApi(action, params) {
+  // 讀取類：用 GET
+  if (params === undefined) {
+    return fetch(API_URL + '?action=' + action)
+      .then(function (res) { return res.json(); });
+  }
+  // 寫入類：用 POST，Content-Type 故意設 text/plain 避免 CORS 預檢問題
+  params.action = action;
+  return fetch(API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: JSON.stringify(params)
+  }).then(function (res) { return res.json(); });
+}
+
+let currentIdToken = null;
+
+/**
+ * ============================================================
+ * 主流程
+ * ============================================================
+ */
+async function main() {
+  try {
+    await liff.init({ liffId: LIFF_ID });
+
+    if (!liff.isLoggedIn()) {
+      liff.login();
+      return; // login() 會跳轉頁面，這裡先中斷
+    }
+
+    currentIdToken = liff.getIDToken();
+
+    const loginResult = await callApi('login', { idToken: currentIdToken });
+
+    if (!loginResult.success) {
+      showError(loginResult.error);
+      return;
+    }
+
+    const data = loginResult.data;
+
+    if (data.isNewUser) {
+      renderRegistrationForm(data);
+    } else if (data.status === 'pending_review') {
+      renderStatusMessage('⏳', '審核中', '你的學生證正在審核中，請耐心等候，審核通過後即可使用完整功能。');
+    } else if (data.status === 'rejected') {
+      renderStatusMessage('❌', '審核未通過', '很抱歉，你的學生證審核未通過，請聯繫系統管理員確認原因。');
+    } else if (data.status === 'banned') {
+      renderStatusMessage('🚫', '帳號已被停權', '你的帳號已被停權，如有疑問請聯繫系統管理員。');
+    } else if (data.status === 'active') {
+      renderMainApp(data);
+    } else {
+      showError('未知的帳號狀態：' + data.status);
+    }
+
+  } catch (err) {
+    showError(err.message || String(err));
+  }
+}
+
+/**
+ * ============================================================
+ * 畫面：註冊表單（第一次使用、上傳學生證）
+ * ============================================================
+ */
+async function renderRegistrationForm(newUserData) {
+  const schoolsResult = await callApi('getSchools');
+  const schools = schoolsResult.success ? schoolsResult.data : [];
+
+  const schoolOptions = schools.map(function (s) {
+    return '<option value="' + s.schoolId + '">' + s.schoolName + '</option>';
+  }).join('');
+
+  document.getElementById('app').innerHTML = `
+    <h1>歡迎加入，${newUserData.lineDisplayName || ''}</h1>
+    <p class="hint">第一次使用需要完成身分驗證，請填寫以下資料並上傳學生證照片，審核通過後即可使用完整功能。</p>
+
+    <form id="reg-form">
+      <label>學校</label>
+      <select id="schoolId" required>
+        <option value="">請選擇學校</option>
+        ${schoolOptions}
+      </select>
+
+      <label>系級 / 系所</label>
+      <input type="text" id="department" placeholder="例如：資訊工程系三年級" required>
+
+      <label>學號</label>
+      <input type="text" id="studentNo" placeholder="例如：B1234567" required>
+
+      <label>真實姓名</label>
+      <input type="text" id="realName" placeholder="需與學生證相符" required>
+
+      <label>暱稱（其他使用者看到的名稱）</label>
+      <input type="text" id="nickname" placeholder="例如：小明" required>
+
+      <label>上傳學生證照片</label>
+      <input type="file" id="idCardPhoto" accept="image/*" required>
+      <img id="preview-img" alt="預覽">
+
+      <div id="form-error" class="error-text"></div>
+
+      <button type="submit" id="submit-btn">送出審核</button>
+    </form>
+  `;
+
+  document.getElementById('idCardPhoto').addEventListener('change', function (e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function (evt) {
+      const img = document.getElementById('preview-img');
+      img.src = evt.target.result;
+      img.style.display = 'block';
+    };
+    reader.readAsDataURL(file);
+  });
+
+  document.getElementById('reg-form').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    const submitBtn = document.getElementById('submit-btn');
+    const errorBox = document.getElementById('form-error');
+    errorBox.textContent = '';
+    submitBtn.disabled = true;
+    submitBtn.textContent = '上傳中...';
+
+    try {
+      const photoFile = document.getElementById('idCardPhoto').files[0];
+      if (!photoFile) throw new Error('請上傳學生證照片');
+
+      const photoBase64 = await fileToBase64(photoFile);
+
+      const result = await callApi('submitVerification', {
+        idToken: currentIdToken,
+        schoolId: document.getElementById('schoolId').value,
+        department: document.getElementById('department').value,
+        studentNo: document.getElementById('studentNo').value,
+        realName: document.getElementById('realName').value,
+        nickname: document.getElementById('nickname').value,
+        photoBase64: photoBase64,
+        photoMimeType: photoFile.type
+      });
+
+      if (!result.success) throw new Error(result.error);
+
+      renderStatusMessage('✅', '送出成功', '你的資料已送出審核，請耐心等候管理員審核學生證。');
+
+    } catch (err) {
+      errorBox.textContent = err.message || String(err);
+      submitBtn.disabled = false;
+      submitBtn.textContent = '送出審核';
+    }
+  });
+}
+
+/**
+ * 把檔案轉成純 base64 字串（去掉開頭的 data:image/xxx;base64, 前綴）
+ */
+function fileToBase64(file) {
+  return new Promise(function (resolve, reject) {
+    const reader = new FileReader();
+    reader.onload = function () {
+      const result = reader.result;
+      const base64 = result.split(',')[1];
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * ============================================================
+ * 畫面：狀態訊息（審核中 / 拒絕 / 停權 / 成功）
+ * ============================================================
+ */
+function renderStatusMessage(icon, title, message) {
+  document.getElementById('app').innerHTML = `
+    <div id="status-box">
+      <div class="icon">${icon}</div>
+      <h1>${title}</h1>
+      <p class="hint">${message}</p>
+    </div>
+  `;
+}
+
+/**
+ * ============================================================
+ * 畫面：主應用程式入口（審核通過後）
+ * 目前先放一個簡單的歡迎畫面，之後每個模組完成後，
+ * 會在這裡加上對應的功能選單（教師聊天室、揪團、二手交易、公告）
+ * ============================================================
+ */
+function renderMainApp(data) {
+  document.getElementById('app').innerHTML = `
+    <h1>歡迎回來，${data.nickname}</h1>
+    <p class="hint">身分：${data.role === 'teacher' ? '教師' : '學生'}　狀態：已通過審核</p>
+    <p class="hint">主功能選單將於後續模組陸續加入這裡。</p>
+  `;
+}
+
+function showError(msg) {
+  document.getElementById('app').innerHTML = `
+    <div id="status-box">
+      <div class="icon">⚠️</div>
+      <h1>發生錯誤</h1>
+      <p class="error-text">${msg}</p>
+    </div>
+  `;
+}
+
+main();
+</script>
+</body>
+</html>
