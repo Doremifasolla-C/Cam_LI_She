@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>教師詢問</title>
+<script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "PingFang TC", "Microsoft JhengHei", sans-serif;
+    background: #f5f4f0;
+    color: #2c2c2a;
+    padding: 16px;
+    line-height: 1.6;
+  }
+  .card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 20px;
+    max-width: 480px;
+    margin: 0 auto 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  h1 { font-size: 20px; margin-bottom: 8px; }
+  h2 { font-size: 16px; margin-bottom: 10px; }
+  a.back-link { display: inline-block; margin-bottom: 12px; color: #06c755; text-decoration: none; font-size: 14px; }
+  p.hint { color: #767671; font-size: 14px; margin-bottom: 12px; }
+  .teacher-item {
+    padding: 12px;
+    border: 1px solid #e6e4dc;
+    border-radius: 8px;
+    margin-bottom: 10px;
+    cursor: pointer;
+  }
+  .teacher-item:active { background: #f5f4f0; }
+  .badge {
+    display: inline-block;
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    margin-top: 4px;
+  }
+  .badge.slot { background: #e3f0ff; color: #1a5fb4; }
+  .badge.quota { background: #fff0e0; color: #b4601a; }
+  .slot-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px;
+    border: 1px solid #e6e4dc;
+    border-radius: 8px;
+    margin-bottom: 8px;
+    font-size: 14px;
+  }
+  .slot-item button {
+    width: auto;
+    padding: 6px 14px;
+    font-size: 13px;
+    margin: 0;
+  }
+  button {
+    padding: 12px;
+    background: #06c755;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:disabled { background: #c9c7bf; }
+  #chat-log {
+    max-height: 320px;
+    overflow-y: auto;
+    margin-bottom: 12px;
+  }
+  .msg {
+    padding: 8px 12px;
+    border-radius: 10px;
+    margin-bottom: 8px;
+    max-width: 80%;
+    font-size: 14px;
+  }
+  .msg.mine { background: #d6f5e3; margin-left: auto; text-align: right; }
+  .msg.theirs { background: #f0efe8; }
+  .msg-input-row { display: flex; gap: 8px; }
+  .msg-input-row input {
+    flex: 1;
+    padding: 10px;
+    border: 1px solid #d8d6ce;
+    border-radius: 8px;
+    font-size: 14px;
+  }
+  .msg-input-row button { width: auto; padding: 10px 16px; }
+  .error-text { color: #d64545; font-size: 13px; margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<div class="card" id="app">
+  <div style="text-align:center; padding: 40px 0;">載入中...</div>
+</div>
+
+<script>
+const LIFF_ID = '你的LIFF_ID';
+const API_URL = '你的Apps_Script部署網址';
+
+let currentIdToken = null;
+let currentUser = null;
+let selectedTeacherId = null;
+let chatPollTimer = null;
+
+function callApi(action, params) {
+  if (params === undefined) {
+    return fetch(API_URL + '?action=' + action).then(function (res) { return res.json(); });
+  }
+  params.action = action;
+  return fetch(API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: JSON.stringify(params)
+  }).then(function (res) { return res.json(); });
+}
+
+async function main() {
+  try {
+    await liff.init({ liffId: LIFF_ID });
+    if (!liff.isLoggedIn()) { liff.login(); return; }
+
+    currentIdToken = liff.getIDToken();
+
+    const profileResult = await callApi('getUserProfile', { idToken: currentIdToken });
+    if (!profileResult.success) {
+      showError('請先完成註冊審核：' + profileResult.error);
+      return;
+    }
+    currentUser = profileResult.data;
+
+    if (currentUser.status !== 'active') {
+      showError('帳號尚未通過審核，無法使用此功能');
+      return;
+    }
+
+    await renderTeacherList();
+
+  } catch (err) {
+    showError(err.message || String(err));
+  }
+}
+
+async function renderTeacherList() {
+  const result = await callApi('getTeachers');
+  if (!result.success) { showError(result.error); return; }
+
+  const teachers = result.data;
+
+  const listHtml = teachers.map(function (t) {
+    const badge = t.consultMode === 'slot_booking'
+      ? '<span class="badge slot">時段預約</span>'
+      : '<span class="badge quota">每週名額 ' + t.weeklyQuotaLimit + ' 位</span>';
+    return `
+      <div class="teacher-item" onclick="openTeacher('${t.teacherId}')">
+        <strong>${t.nickname}</strong>　${t.department || ''}
+        <div>${badge}</div>
+      </div>
+    `;
+  }).join('') || '<p class="hint">目前還沒有教師開放詢問</p>';
+
+  document.getElementById('app').innerHTML = `
+    <a class="back-link" href="index.html">← 回主畫面</a>
+    <h1>教師列表</h1>
+    <p class="hint">點選老師即可查看時段或直接留言提問</p>
+    ${listHtml}
+  `;
+}
+
+async function openTeacher(teacherId) {
+  selectedTeacherId = teacherId;
+
+  const [teachersResult, slotsResult, messagesResult] = await Promise.all([
+    callApi('getTeachers'),
+    fetch(API_URL + '?action=getTeacherSlots&teacherId=' + encodeURIComponent(teacherId)).then(function (r) { return r.json(); }),
+    callApi('getMessages', { idToken: currentIdToken, otherUserId: teacherId })
+  ]);
+
+  const teacher = teachersResult.data.find(function (t) { return t.teacherId === teacherId; });
+
+  let slotsHtml = '';
+  if (teacher.consultMode === 'slot_booking') {
+    const slots = slotsResult.success ? slotsResult.data : [];
+    slotsHtml = '<h2>可預約時段</h2>' + (slots.length
+      ? slots.map(function (s) {
+          const modeText = s.mode === 'online' ? '線上' : '實體';
+          return `
+            <div class="slot-item">
+              <span>${s.slotDate} ${s.startTime}-${s.endTime}（${modeText}）${s.isFull ? '　已額滿' : '　' + s.bookedCount + '/' + s.capacity}</span>
+              <button ${s.isFull ? 'disabled' : ''} onclick="bookSlot('${s.slotId}')">預約</button>
+            </div>
+          `;
+        }).join('')
+      : '<p class="hint">目前沒有開放中的時段</p>');
+  }
+
+  const messages = messagesResult.success ? messagesResult.data : [];
+  const chatHtml = messages.map(function (m) {
+    const cls = m.senderRole === 'student' ? 'mine' : 'theirs';
+    return `<div class="msg ${cls}">${escapeHtml(m.content)}</div>`;
+  }).join('') || '<p class="hint">還沒有對話紀錄，直接在下方留言提問吧</p>';
+
+  document.getElementById('app').innerHTML = `
+    <a class="back-link" href="javascript:void(0)" onclick="renderTeacherList()">← 回教師列表</a>
+    <h1>${teacher.nickname}</h1>
+    ${slotsHtml}
+    <h2 style="margin-top:16px;">留言提問</h2>
+    <div id="chat-log">${chatHtml}</div>
+    <div class="msg-input-row">
+      <input type="text" id="msg-input" placeholder="輸入你的問題...">
+      <button onclick="sendMsg()">送出</button>
+    </div>
+    <div id="msg-error" class="error-text"></div>
+  `;
+
+  document.getElementById('chat-log').scrollTop = document.getElementById('chat-log').scrollHeight;
+}
+
+async function bookSlot(slotId) {
+  const result = await callApi('bookSlot', { idToken: currentIdToken, slotId: slotId });
+  if (!result.success) {
+    alert('預約失敗：' + result.error);
+    return;
+  }
+  alert('預約成功！');
+  openTeacher(selectedTeacherId);
+}
+
+async function sendMsg() {
+  const input = document.getElementById('msg-input');
+  const errorBox = document.getElementById('msg-error');
+  const content = input.value.trim();
+  if (!content) return;
+
+  errorBox.textContent = '';
+  const result = await callApi('sendMessage', {
+    idToken: currentIdToken,
+    otherUserId: selectedTeacherId,
+    content: content
+  });
+
+  if (!result.success) {
+    errorBox.textContent = result.error;
+    return;
+  }
+
+  input.value = '';
+  openTeacher(selectedTeacherId);
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function showError(msg) {
+  document.getElementById('app').innerHTML = `
+    <a class="back-link" href="index.html">← 回主畫面</a>
+    <h1>⚠️ 發生錯誤</h1>
+    <p class="error-text">${msg}</p>
+  `;
+}
+
+main();
+</script>
+</body>
+</html>
