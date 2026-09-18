@@ -76,8 +76,8 @@
  * 設定區：以下兩個值一定要換成你自己的
  * ============================================================
  */
-const LIFF_ID = '2011648627-nKXtNx4E';           // 從 LINE Developers Console 的 LIFF Channel 頁面複製
-const API_URL = 'https://script.google.com/macros/s/AKfycbyaS8iXoPQ1DHq2pvB2TiebOynePHK3u49dHt7eFboYgSI7LjjmHVQopEOz5gLC41sA/exec'; // 例如 https://script.google.com/macros/s/xxxxx/exec
+const LIFF_ID = '你的LIFF_ID';           // 從 LINE Developers Console 的 LIFF Channel 頁面複製
+const API_URL = '你的Apps_Script部署網址'; // 例如 https://script.google.com/macros/s/xxxxx/exec
 
 /**
  * ============================================================
@@ -279,10 +279,15 @@ function renderStatusMessage(icon, title, message) {
  * ============================================================
  */
 function renderMainApp(data) {
+  const teacherLink = data.role === 'teacher'
+    ? '<a href="teacher-admin.html" style="text-decoration:none;"><button type="button">前往教師管理後台</button></a>'
+    : '<a href="teachers.html" style="text-decoration:none;"><button type="button">瀏覽教師 / 提問</button></a>';
+
   document.getElementById('app').innerHTML = `
     <h1>歡迎回來，${data.nickname}</h1>
     <p class="hint">身分：${data.role === 'teacher' ? '教師' : '學生'}　狀態：已通過審核</p>
-    <p class="hint">主功能選單將於後續模組陸續加入這裡。</p>
+    ${teacherLink}
+    <p class="hint" style="margin-top:20px;">其他功能選單將於後續模組陸續加入這裡。</p>
   `;
 }
 
